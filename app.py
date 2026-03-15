@@ -1,38 +1,54 @@
 import streamlit as st
 from groq import Groq
+from langchain.document_loaders import PyPDFLoader
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.embeddings import HuggingFaceEmbeddings
+from langchain.vectorstores import FAISS
 
-st.title("AI Hackathon Chatbot 🤖")
+st.title("AI Document Chatbot 🤖")
 
 client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 
-# store chat history
-if "messages" not in st.session_state:
-    st.session_state.messages = []
+uploaded_file = st.file_uploader("Upload a PDF", type="pdf")
 
-# show previous messages
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.write(message["content"])
+if uploaded_file:
 
-# input box
-user_input = st.chat_input("Type a message...")
+    with open("temp.pdf", "wb") as f:
+        f.write(uploaded_file.read())
 
-# only run when user types something
-if user_input:
+    loader = PyPDFLoader("temp.pdf")
+    pages = loader.load()
 
-    st.session_state.messages.append({"role": "user", "content": user_input})
+    splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
+    docs = splitter.split_documents(pages)
 
-    with st.chat_message("user"):
-        st.write(user_input)
+    embeddings = HuggingFaceEmbeddings()
 
-    response = client.chat.completions.create(
-        model="llama-3.1-8b-instant",
-        messages=st.session_state.messages
-    )
+    db = FAISS.from_documents(docs, embeddings)
 
-    reply = response.choices[0].message.content
+    query = st.chat_input("Ask something about the document")
 
-    st.session_state.messages.append({"role": "assistant", "content": reply})
+    if query:
 
-    with st.chat_message("assistant"):
-        st.write(reply)
+        results = db.similarity_search(query)
+
+        context = " ".join([doc.page_content for doc in results])
+
+        prompt = f"""
+        Answer the question using the context below.
+
+        Context:
+        {context}
+
+        Question:
+        {query}
+        """
+
+        response = client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=[{"role": "user", "content": prompt}]
+        )
+
+        answer = response.choices[0].message.content
+
+        st.write(answer)
